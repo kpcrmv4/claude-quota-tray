@@ -40,6 +40,7 @@ class UsageSnapshot:
     ok: bool
     error: Optional[str] = None
     fetched_at: float = 0.0
+    status_code: Optional[int] = None  # HTTP status (None on network error)
 
     @property
     def has_data(self) -> bool:
@@ -158,6 +159,7 @@ def fetch_usage(token: str, model: str = DEFAULT_MODEL,
 
         ok=resp.is_success or snapshot_has_headers(rh),
         fetched_at=time.time(),
+        status_code=resp.status_code,
     )
 
     if not resp.is_success and not snapshot.has_data:

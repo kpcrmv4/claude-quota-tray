@@ -175,6 +175,17 @@ def _poll_loop_inner(icon: pystray.Icon):
                 _load_active_token()
             if state.token:
                 snapshot = fetch_usage(state.token, model=config.MODEL)
+                # Stale-token guard: Claude Code rotates OAuth access tokens
+                # periodically. If our cached token was rotated out from under
+                # us, the API returns 401/403. Re-read the credentials file
+                # once and retry the poll — costs one wasted request per
+                # rotation event, but keeps the tray live across rotations
+                # without forcing the user to restart.
+                if (snapshot.status_code in (401, 403)
+                        and not snapshot.has_data):
+                    _load_active_token()
+                    if state.token:
+                        snapshot = fetch_usage(state.token, model=config.MODEL)
                 state.snapshot = snapshot
                 acct_id = state.active_account["id"] if state.active_account else "unknown"
                 history.record(acct_id, snapshot)
