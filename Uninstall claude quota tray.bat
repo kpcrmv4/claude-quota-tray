@@ -8,11 +8,31 @@ if "%PROJECT_DIR:~-1%"=="\" set "PROJECT_DIR=%PROJECT_DIR:~0,-1%"
 set "SHORTCUT=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Claude Quota Tray.lnk"
 set "VENV_DIR=%PROJECT_DIR%\.venv"
 set "DATA_DIR=%USERPROFILE%\.claude-quota-tray"
+set "MAIN_SCRIPT=%PROJECT_DIR%\src\main.py"
 
 echo.
 echo ============================================================
 echo   Claude Quota Tray  -  Uninstall
 echo ============================================================
+echo.
+
+REM ---- Stop running tray app (so .venv files are not locked) ----
+echo Stopping running instance(s), if any...
+set "PS_TEMP=%TEMP%\cqt_stop_%RANDOM%.ps1"
+> "%PS_TEMP%" echo $target = "%MAIN_SCRIPT%"
+>> "%PS_TEMP%" echo $names = @('pythonw.exe','python.exe')
+>> "%PS_TEMP%" echo $stopped = 0
+>> "%PS_TEMP%" echo foreach ($name in $names) {
+>> "%PS_TEMP%" echo     $procs = @(Get-CimInstance Win32_Process -Filter "Name='$name'" -ErrorAction SilentlyContinue ^| Where-Object { $_.CommandLine -like "*$target*" })
+>> "%PS_TEMP%" echo     if ($procs.Count -gt 0) {
+>> "%PS_TEMP%" echo         $procs ^| ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+>> "%PS_TEMP%" echo         $stopped += $procs.Count
+>> "%PS_TEMP%" echo     }
+>> "%PS_TEMP%" echo }
+>> "%PS_TEMP%" echo if ($stopped -gt 0) { Write-Host "  Stopped $stopped process(es)." } else { Write-Host "  No running instance found." }
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PS_TEMP%" 2>nul
+del "%PS_TEMP%" >nul 2>&1
+timeout /t 1 /nobreak >nul 2>&1
 echo.
 
 REM ---- Remove startup shortcut ----

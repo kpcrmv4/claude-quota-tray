@@ -108,7 +108,7 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
-echo   Installed: httpx, pystray, Pillow, windows-toasts
+echo   Installed packages from requirements.txt ^(incl. pycryptodome on Windows^)
 echo.
 
 REM ==================================================================
@@ -119,16 +119,29 @@ echo [4/4] Creating Windows Startup shortcut...
 set "STARTUP_DIR=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup"
 set "SHORTCUT=%STARTUP_DIR%\Claude Quota Tray.lnk"
 set "MAIN_SCRIPT=%PROJECT_DIR%\src\main.py"
+set "APP_EXE=%PROJECT_DIR%\dist\ClaudeQuotaTray.exe"
+set "APP_ICON=%PROJECT_DIR%\assets\app.ico"
 
 set "VBS_TEMP=%TEMP%\cqt_make_shortcut_%RANDOM%.vbs"
 
 > "%VBS_TEMP%" echo Set ws = CreateObject("WScript.Shell")
 >> "%VBS_TEMP%" echo Set s = ws.CreateShortcut("%SHORTCUT%")
->> "%VBS_TEMP%" echo s.TargetPath = "%VENV_PYW%"
->> "%VBS_TEMP%" echo s.Arguments = """%MAIN_SCRIPT%"""
+if exist "%APP_EXE%" (
+    echo   Using built .exe for startup shortcut ^(custom taskbar icon^).
+    >> "%VBS_TEMP%" echo s.TargetPath = "%APP_EXE%"
+    >> "%VBS_TEMP%" echo s.Arguments = ""
+) else (
+    echo   No dist\ClaudeQuotaTray.exe — shortcut uses pythonw ^(taskbar may show Python^).
+    echo   Run build.bat after setup for the custom icon on the taskbar.
+    >> "%VBS_TEMP%" echo s.TargetPath = "%VENV_PYW%"
+    >> "%VBS_TEMP%" echo s.Arguments = """%MAIN_SCRIPT%"""
+)
 >> "%VBS_TEMP%" echo s.WorkingDirectory = "%PROJECT_DIR%"
 >> "%VBS_TEMP%" echo s.WindowStyle = 7
 >> "%VBS_TEMP%" echo s.Description = "Claude Quota Tray - shows Claude usage in the system tray"
+if exist "%APP_ICON%" (
+    >> "%VBS_TEMP%" echo s.IconLocation = "%APP_ICON%,0"
+)
 >> "%VBS_TEMP%" echo s.Save
 
 cscript //nologo "%VBS_TEMP%" >nul 2>&1
@@ -154,7 +167,11 @@ echo.
 if errorlevel 2 goto :end_no_launch
 
 echo Starting...
-start "" "%VENV_PYW%" "%MAIN_SCRIPT%"
+if exist "%APP_EXE%" (
+    start "" "%APP_EXE%"
+) else (
+    start "" "%VENV_PYW%" "%MAIN_SCRIPT%"
+)
 echo The tray icon should appear shortly in the bottom-right of your screen.
 echo If you don't see it, click the up-arrow to show hidden icons.
 echo.

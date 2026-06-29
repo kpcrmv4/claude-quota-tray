@@ -11,9 +11,14 @@ from __future__ import annotations
 import tkinter as tk
 from typing import Optional
 
+from ui_theme import colors as _ui_colors
 
-# --- Colours -------------------------------------------------------------
 
+def _c():
+    return _ui_colors()
+
+
+# Re-exported for callers; refreshed via refresh_color_constants().
 BG = "#1e1e1e"
 PANEL_BG = "#262626"
 TRACK_BG = "#2d2d2d"
@@ -21,6 +26,22 @@ TEXT = "#f5f5f5"
 MUTED = "#94a3b8"
 BTN_BG = "#2d2d2d"
 BTN_BG_ACTIVE = "#3a3a3a"
+
+
+def refresh_color_constants() -> None:
+    """Sync module-level colour names with current UI theme."""
+    global BG, PANEL_BG, TRACK_BG, TEXT, MUTED, BTN_BG, BTN_BG_ACTIVE
+    c = _c()
+    BG = c["BG"]
+    PANEL_BG = c["PANEL_BG"]
+    TRACK_BG = c["TRACK_BG"]
+    TEXT = c["TEXT"]
+    MUTED = c["MUTED"]
+    BTN_BG = c["BTN_BG"]
+    BTN_BG_ACTIVE = c["BTN_BG_ACTIVE"]
+
+
+refresh_color_constants()
 
 
 # --- Font selection ------------------------------------------------------
@@ -118,6 +139,11 @@ def _lighten(hex_color: str, amount: float) -> str:
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
+def rounded_rect(canvas: tk.Canvas, x1, y1, x2, y2, radius, **kwargs):
+    """Public alias for chart panels and bars."""
+    return _rounded_rect(canvas, x1, y1, x2, y2, radius, **kwargs)
+
+
 def _rounded_rect(canvas: tk.Canvas, x1, y1, x2, y2, radius, **kwargs):
     r = max(0, min(radius, (x2 - x1) / 2, (y2 - y1) / 2))
     points = [
@@ -139,13 +165,14 @@ def _rounded_rect(canvas: tk.Canvas, x1, y1, x2, y2, radius, **kwargs):
 
 def paint_bar(canvas: tk.Canvas, pct: Optional[int]) -> None:
     """Paint the bar's track and fill on a canvas."""
+    c = _c()
     canvas.delete("all")
     w = canvas.winfo_width()
     h = canvas.winfo_height()
     if w < 4 or h < 4:
         return
 
-    _rounded_rect(canvas, 0, 0, w, h, radius=h / 2, fill=TRACK_BG, outline="")
+    _rounded_rect(canvas, 0, 0, w, h, radius=h / 2, fill=c["TRACK_BG"], outline="")
     if pct is None or pct <= 0:
         return
 
@@ -160,31 +187,69 @@ def paint_bar(canvas: tk.Canvas, pct: Optional[int]) -> None:
         )
 
 
+def build_compact_bar(parent, label_text: str) -> dict:
+    """Smaller bar for desktop widget (label + thin track only)."""
+    c = _c()
+    frame = tk.Frame(parent, bg=c["BG"])
+    row = tk.Frame(frame, bg=c["BG"])
+    row.pack(fill="x")
+    tk.Label(
+        row, text=label_text, font=ui_font(8),
+        fg=c["MUTED"], bg=c["BG"], width=8, anchor="w",
+    ).pack(side="left")
+    pct_lbl = tk.Label(
+        row, text="—", font=ui_font(9, "bold"),
+        fg=c["TEXT"], bg=c["BG"], anchor="e",
+    )
+    pct_lbl.pack(side="right")
+    canvas = tk.Canvas(frame, height=10, bg=c["BG"], highlightthickness=0, bd=0)
+    canvas.pack(fill="x", pady=(2, 0))
+    state = {"frame": frame, "canvas": canvas, "pct": pct_lbl, "value": None}
+
+    def _redraw(_e=None):
+        paint_bar(canvas, state["value"])
+
+    canvas.bind("<Configure>", _redraw)
+    state["redraw"] = _redraw
+    return state
+
+
+def apply_compact_bar(bar: dict, pct: Optional[int]) -> None:
+    c = _c()
+    bar["value"] = pct
+    if pct is None:
+        bar["pct"].configure(text="—", fg=c["MUTED"])
+    else:
+        bar["pct"].configure(text=f"{pct}%", fg=bar_color(pct))
+    bar["redraw"]()
+
+
 def build_bar(parent, label_text: str) -> dict:
     """Create one labelled progress bar and return its widget refs."""
-    frame = tk.Frame(parent, bg=PANEL_BG)
+    c = _c()
+    frame = tk.Frame(parent, bg=c["PANEL_BG"])
 
-    top = tk.Frame(frame, bg=PANEL_BG)
+    top = tk.Frame(frame, bg=c["PANEL_BG"])
     top.pack(fill="x", padx=14, pady=(10, 4))
 
     tk.Label(
         top, text=label_text, font=ui_font(10, "bold"),
-        fg=TEXT, bg=PANEL_BG,
+        fg=c["TEXT"], bg=c["PANEL_BG"],
     ).pack(side="left")
 
     pct_w = tk.Label(
         top, text="—", font=ui_font(22, "bold"),
-        fg=TEXT, bg=PANEL_BG,
+        fg=c["TEXT"], bg=c["PANEL_BG"],
     )
     pct_w.pack(side="right")
 
-    canvas = tk.Canvas(frame, height=18, bg=PANEL_BG,
+    canvas = tk.Canvas(frame, height=18, bg=c["PANEL_BG"],
                        highlightthickness=0, bd=0)
     canvas.pack(fill="x", padx=14)
 
     reset_w = tk.Label(
         frame, text="—", font=ui_font(9),
-        fg=MUTED, bg=PANEL_BG, anchor="w",
+        fg=c["MUTED"], bg=c["PANEL_BG"], anchor="w",
     )
     reset_w.pack(fill="x", padx=14, pady=(4, 10))
 

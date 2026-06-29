@@ -1,22 +1,25 @@
 """
-Full history window: 2 progress bars on top + 24-hour usage chart.
-Uses shared widgets from bar_widget.py.
+Full history window: progress bars + separate Session / Weekly chart panels.
 """
 
 from __future__ import annotations
 
+import csv
 import threading
 import time
 import tkinter as tk
-from datetime import datetime
+from pathlib import Path
+from tkinter import filedialog, messagebox
 from typing import Callable, Optional
 
+import chart_widget
 import history
+import settings as user_settings
 from bar_widget import (
-    BG, BTN_BG, BTN_BG_ACTIVE, MUTED, TEXT,
-    apply_bar, build_bar, format_burn, ui_font,
+    apply_bar, build_bar, format_burn, refresh_color_constants, ui_font,
 )
 from i18n import t
+from ui_theme import colors
 
 
 _window_lock = threading.Lock()
@@ -46,88 +49,131 @@ def show(account_id: str, account_name: str,
             "burn": b,
         }
 
-    t = threading.Thread(
+    threading.Thread(
         target=_run_window,
         args=(account_id, account_name, get_data),
         daemon=True,
-    )
-    t.start()
+    ).start()
 
 
 def _run_window(account_id: str, account_name: str,
                 get_data: SnapshotFetcher) -> None:
     global _open_window
+    refresh_color_constants()
+    c = colors()
 
     root = tk.Tk()
-    root.title(t('window.history_title', name=account_name))
-    root.geometry("760x560")
-    root.minsize(560, 420)
-    root.configure(bg=BG)
+    root.title(t("window.history_title", name=account_name))
+    root.geometry("760x720")
+    root.minsize(560, 520)
+    root.configure(bg=c["BG"])
 
     with _window_lock:
         _open_window = root
 
-    header = tk.Frame(root, bg=BG)
+    hours_var = tk.DoubleVar(value=24.0)
+
+    header = tk.Frame(root, bg=c["BG"])
     header.pack(fill="x", padx=18, pady=(16, 0))
-    title_box = tk.Frame(header, bg=BG)
+    title_box = tk.Frame(header, bg=c["BG"])
     title_box.pack(side="left")
-    tk.Label(
-        title_box, text=t('window.current_usage'),
-        font=ui_font(13, "bold"),
-        fg=TEXT, bg=BG,
-    ).pack(side="left")
-    plan_lbl = tk.Label(
-        title_box, text="", font=ui_font(10, "bold"),
-        fg="#a3b8ff", bg=BG,
-    )
+    tk.Label(title_box, text=t("window.current_usage"), font=ui_font(13, "bold"), fg=c["TEXT"], bg=c["BG"]).pack(side="left")
+    plan_lbl = tk.Label(title_box, text="", font=ui_font(10, "bold"), fg=c["ACCENT"], bg=c["BG"])
     plan_lbl.pack(side="left", padx=(10, 0))
-    burn_lbl = tk.Label(
-        header, text="", font=ui_font(10),
-        fg=MUTED, bg=BG, justify="right",
-    )
+    burn_lbl = tk.Label(header, text="", font=ui_font(10), fg=c["MUTED"], bg=c["BG"], justify="right")
     burn_lbl.pack(side="right")
 
-    bars_panel = tk.Frame(root, bg=BG)
+    bars_panel = tk.Frame(root, bg=c["BG"])
     bars_panel.pack(fill="x", padx=18, pady=(10, 6))
-
-    session_bar = build_bar(bars_panel, t('bar.session_label'))
+    session_bar = build_bar(bars_panel, t("bar.session_label"))
     session_bar["frame"].pack(fill="x", pady=(0, 10))
-    weekly_bar = build_bar(bars_panel, t('bar.weekly_label'))
+    weekly_bar = build_bar(bars_panel, t("bar.weekly_label"))
     weekly_bar["frame"].pack(fill="x")
 
-    tk.Label(
-        root, text=t('window.last_24h'),
-        font=ui_font(11, "bold"),
-        fg=TEXT, bg=BG,
-    ).pack(anchor="w", padx=18, pady=(14, 2))
+    range_row = tk.Frame(root, bg=c["BG"])
+    range_row.pack(fill="x", padx=18, pady=(12, 4))
+    tk.Label(range_row, text=t("window.history_range"), font=ui_font(11, "bold"), fg=c["TEXT"], bg=c["BG"]).pack(side="left")
 
-    canvas = tk.Canvas(root, bg=BG, highlightthickness=0)
-    canvas.pack(fill="both", expand=True, padx=18, pady=(2, 8))
+    charts_box = tk.Frame(root, bg=c["BG"])
+    charts_box.pack(fill="both", expand=True, padx=18, pady=(4, 4))
+    session_chart = chart_widget.build_chart_panel(charts_box, t("bar.session_label"))
+    session_chart["frame"].pack(fill="x", pady=(0, 8))
+    weekly_chart = chart_widget.build_chart_panel(charts_box, t("bar.weekly_label"))
+    weekly_chart["frame"].pack(fill="x")
 
-    footer = tk.Frame(root, bg=BG)
+    footer = tk.Frame(root, bg=c["BG"])
     footer.pack(fill="x", padx=18, pady=(0, 14))
-    _legend_swatch(footer, "#4ade80", t('bar.session_short'))
-    _legend_swatch(footer, "#60a5fa", t('bar.weekly_short'))
+
+    def _redraw_charts():
+        hrs = hours_var.get()
+        rows = history.recent(hrs, account_id)
+        chart_widget.redraw_series(session_chart, rows, 1, hours=hrs)
+        chart_widget.redraw_series(weekly_chart, rows, 2, hours=hrs)
 
     def _refresh_all():
+        refresh_color_constants()
         data = get_data()
         apply_bar(session_bar, data.get("session_pct"), data.get("session_reset"))
         apply_bar(weekly_bar, data.get("weekly_pct"), data.get("weekly_reset"))
         burn_lbl.configure(text=format_burn(data.get("burn") or {}))
         plan = data.get("plan")
         plan_lbl.configure(text=("· " + plan) if plan else "")
-        _redraw_chart(canvas, account_id)
+        _redraw_charts()
 
-    refresh_btn = tk.Button(
-        footer, text=t('common.refresh'),
-        command=_refresh_all,
-        bg=BTN_BG, fg=TEXT, relief="flat",
-        activebackground=BTN_BG_ACTIVE, activeforeground=TEXT,
-        padx=14, pady=4, cursor="hand2",
-    )
-    refresh_btn.pack(side="right")
+    def _ensure_retention_for(hrs: float):
+        # Longer views are only useful if history isn't pruned before it fills.
+        # Bump retention upward (never down) so future data accumulates.
+        try:
+            need_days = int(hrs / 24)
+            cur = int(user_settings.get("history_retention_days", 7))
+            if need_days > cur:
+                user_settings.update(history_retention_days=need_days + 1)
+        except Exception:
+            pass
 
-    canvas.bind("<Configure>", lambda _e: _redraw_chart(canvas, account_id))
+    def _set_range(hrs: float):
+        hours_var.set(hrs)
+        _ensure_retention_for(hrs)
+        _redraw_charts()
+
+    for hrs, label_key in (
+        (24, "window.range_24h"),
+        (168, "window.range_7d"),
+        (720, "window.range_30d"),
+    ):
+        tk.Radiobutton(
+            range_row, text=t(label_key), variable=hours_var, value=hrs,
+            command=lambda h=hrs: _set_range(h),
+            bg=c["BG"], fg=c["TEXT"], selectcolor=c["BG"],
+            activebackground=c["BG"], activeforeground=c["TEXT"],
+            font=ui_font(9),
+        ).pack(side="left", padx=(12, 0))
+
+    def _export_csv():
+        path = filedialog.asksaveasfilename(
+            parent=root, defaultextension=".csv",
+            filetypes=[("CSV", "*.csv"), ("All", "*.*")],
+            initialfile=f"claude-quota-{account_name[:20]}.csv",
+        )
+        if not path:
+            return
+        try:
+            history.export_csv(path, hours_var.get(), account_id)
+            messagebox.showinfo(t("window.export_title"), t("window.export_ok", path=path), parent=root)
+        except Exception as e:
+            messagebox.showerror(t("window.export_title"), str(e), parent=root)
+
+    tk.Button(footer, text=t("window.export_csv"), command=_export_csv,
+              bg=c["BTN_BG"], fg=c["TEXT"], relief="flat",
+              activebackground=c["BTN_BG_ACTIVE"], activeforeground=c["TEXT"],
+              padx=12, pady=4, cursor="hand2").pack(side="left")
+    tk.Button(footer, text=t("common.refresh"), command=_refresh_all,
+              bg=c["BTN_BG"], fg=c["TEXT"], relief="flat",
+              activebackground=c["BTN_BG_ACTIVE"], activeforeground=c["TEXT"],
+              padx=14, pady=4, cursor="hand2").pack(side="right")
+
+    session_chart["canvas"].bind("<Configure>", lambda _e: _redraw_charts())
+    weekly_chart["canvas"].bind("<Configure>", lambda _e: _redraw_charts())
     root.after(50, _refresh_all)
 
     def _auto():
@@ -147,72 +193,3 @@ def _run_window(account_id: str, account_name: str,
 
     root.protocol("WM_DELETE_WINDOW", on_close)
     root.mainloop()
-
-
-def _legend_swatch(parent: tk.Frame, color: str, label: str) -> None:
-    box = tk.Frame(parent, bg=BG)
-    box.pack(side="left", padx=(0, 18))
-    tk.Frame(box, width=14, height=14, bg=color).pack(side="left", padx=(0, 6))
-    tk.Label(box, text=label, fg=MUTED, bg=BG,
-             font=ui_font(9)).pack(side="left")
-
-
-def _redraw_chart(canvas: tk.Canvas, account_id: str) -> None:
-    canvas.delete("all")
-    w = canvas.winfo_width()
-    h = canvas.winfo_height()
-    if w < 50 or h < 50:
-        return
-
-    rows = history.recent(24, account_id)
-    pad_l, pad_r, pad_t, pad_b = 44, 12, 8, 24
-    plot_w = w - pad_l - pad_r
-    plot_h = h - pad_t - pad_b
-
-    for pct in (0, 25, 50, 75, 100):
-        y = pad_t + plot_h - (pct / 100.0) * plot_h
-        canvas.create_line(pad_l, y, pad_l + plot_w, y,
-                           fill="#2d2d2d", width=1)
-        canvas.create_text(pad_l - 6, y, text=f"{pct}%",
-                           anchor="e", fill=MUTED,
-                           font=ui_font(8))
-
-    now = time.time()
-    start = now - 24 * 3600
-    for hours_ago in (24, 18, 12, 6, 0):
-        ts = now - hours_ago * 3600
-        x = pad_l + ((ts - start) / max(now - start, 1)) * plot_w
-        label = datetime.fromtimestamp(ts).strftime("%H:%M")
-        canvas.create_text(x, pad_t + plot_h + 12, text=label,
-                           fill=MUTED, font=ui_font(8))
-
-    if not rows:
-        canvas.create_text(
-            pad_l + plot_w / 2, pad_t + plot_h / 2,
-            text=t('window.no_history'),
-            fill=MUTED, font=ui_font(10),
-        )
-        return
-
-    def to_xy(ts: float, pct: int):
-        x = pad_l + ((ts - start) / max(now - start, 1)) * plot_w
-        y = pad_t + plot_h - (pct / 100.0) * plot_h
-        return x, y
-
-    _plot_series(canvas, rows, 1, "#4ade80", to_xy)
-    _plot_series(canvas, rows, 2, "#60a5fa", to_xy)
-
-
-def _plot_series(canvas: tk.Canvas, rows: list, idx: int, color: str, to_xy) -> None:
-    pts = [to_xy(r[0], r[idx]) for r in rows if r[idx] is not None]
-    if len(pts) < 2:
-        for x, y in pts:
-            canvas.create_oval(x - 3, y - 3, x + 3, y + 3, fill=color, outline="")
-        return
-    flat: list[float] = []
-    for x, y in pts:
-        flat.extend([x, y])
-    canvas.create_line(*flat, fill=color, width=2, smooth=True)
-    last_x, last_y = pts[-1]
-    canvas.create_oval(last_x - 4, last_y - 4, last_x + 4, last_y + 4,
-                       fill=color, outline="")

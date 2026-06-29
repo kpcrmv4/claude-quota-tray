@@ -75,13 +75,16 @@ def get_token(account: dict) -> str:
     return get_credentials(account)["token"]
 
 
-def get_credentials(account: dict) -> dict:
+def get_credentials(account: dict, exclude_tokens: Optional[set] = None) -> dict:
     """
     Return {"token": str, "plan": Optional[str]} for the given account.
+
+    ``exclude_tokens`` is honoured for "auto" accounts so a token already
+    known to be invalid is skipped in favour of the next discovery source.
     """
     mode = account.get("mode", "auto")
     if mode == "auto":
-        return read_credentials()
+        return read_credentials(exclude_tokens=exclude_tokens)
     path = account.get("path")
     if not path:
         raise TokenError(f"Account '{account.get('name')}' has no path configured.")

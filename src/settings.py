@@ -33,7 +33,21 @@ def _defaults() -> Dict[str, Any]:
         ],
         "active_account_id": None,  # falls back to accounts[0]
         "thresholds": [80, 95],
+        "thresholds_session": [80, 95],
+        "thresholds_weekly": [80, 95],
+        "tray_icon_metric": "session",  # session | weekly | max
+        "alert_snooze_until": 0.0,
+        "notify_on_update": True,
+        "desktop_widget": {
+            "enabled": False,
+            "x": None,
+            "y": None,
+            "opacity": 0.92,
+            "click_action": "status",
+        },
         "sound_alerts": True,
+        "notify_before_reset": True,   # toast when a used-up limit is about to reset
+        "reset_notice_minutes": 10,    # how early to fire that toast
         "schedule": {
             "enabled": False,
             "start_hour": 9,
@@ -45,6 +59,8 @@ def _defaults() -> Dict[str, Any]:
         "poll_interval_seconds": 60,
         "history_retention_days": 7,
         "language": None,  # None → auto-detect from locale on first read
+        # GitHub owner/repo (or URL) for release checks and source/.exe updates
+        "update_github_repo": None,  # None → config.DEFAULT_UPDATE_REPO
     }
 
 
@@ -60,6 +76,17 @@ def _migrate(data: Dict[str, Any]) -> Dict[str, Any]:
 
     if not data.get("accounts"):
         data["accounts"] = defaults["accounts"]
+    if not data.get("active_account_id") and data.get("accounts"):
+        data["active_account_id"] = data["accounts"][0]["id"]
+    legacy = data.get("thresholds")
+    if legacy and not data.get("thresholds_session"):
+        data["thresholds_session"] = list(legacy)
+    if legacy and not data.get("thresholds_weekly"):
+        data["thresholds_weekly"] = list(legacy)
+    dw = data.get("desktop_widget") or {}
+    for key, val in defaults["desktop_widget"].items():
+        dw.setdefault(key, val)
+    data["desktop_widget"] = dw
     return data
 
 

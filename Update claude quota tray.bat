@@ -68,24 +68,23 @@ timeout /t 1 /nobreak >nul 2>&1
 echo.
 
 REM ==================================================================
-REM [2/3] Refresh dependencies from requirements.txt
+REM [2/3] Download latest release from GitHub and refresh deps
 REM ==================================================================
-echo [2/3] Installing/updating dependencies...
-echo   ^(This picks up any new packages added to requirements.txt^)
+echo [2/3] Updating from GitHub ^(see settings: update_github_repo^)...
 
-"%VENV_PY%" -m pip install --upgrade pip --quiet --disable-pip-version-check
-if errorlevel 1 (
-    echo.
-    echo   [ERROR] Failed to upgrade pip.
+set "UPDATE_RUNNER=%PROJECT_DIR%\src\update_runner.py"
+if not exist "%UPDATE_RUNNER%" (
+    echo   [ERROR] src\update_runner.py not found.
     pause
     exit /b 1
 )
 
-"%VENV_PY%" -m pip install -r "%PROJECT_DIR%\requirements.txt" --quiet --disable-pip-version-check
+"%VENV_PY%" "%UPDATE_RUNNER%" --apply
 if errorlevel 1 (
     echo.
-    echo   [ERROR] Failed to install dependencies.
-    echo   Check your internet connection and try again.
+    echo   [ERROR] GitHub update failed.
+    echo   Check internet, repo name in tray menu - Install/update - Update source,
+    echo   or publish a release on GitHub with a source .zip asset.
     pause
     exit /b 1
 )
@@ -94,11 +93,14 @@ echo   Done.
 echo.
 
 REM ==================================================================
-REM [3/3] Restart the app
+REM [3/3] Restart ^(update_runner starts the app when successful^)
 REM ==================================================================
-echo [3/3] Starting Claude Quota Tray...
-start "" "%VENV_PYW%" "%MAIN_SCRIPT%"
-echo   Launched.
+echo [3/3] Restart...
+if not exist "%MAIN_SCRIPT%" (
+    echo   Source update complete. Start manually with "Run claude quota tray.bat"
+) else (
+    echo   If the tray icon did not appear, run "Run claude quota tray.bat".
+)
 echo.
 
 echo ============================================================
