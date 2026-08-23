@@ -203,8 +203,14 @@ def _poll_loop_inner(icon: pystray.Icon):
 
         _maybe_prune()
         interval = int(user_settings.get("poll_interval_seconds", config.POLL_INTERVAL_SECONDS))
+        wait = max(15, interval)
+        snap = state.snapshot
+        if snap is not None and snap.status_code == 429 and snap.retry_after_seconds:
+            # Rate limited — honour Retry-After (plus a small margin) instead
+            # of polling straight back into the limit.
+            wait = max(wait, min(snap.retry_after_seconds + 15, 3600))
         state.force_refresh.clear()
-        state.force_refresh.wait(timeout=max(15, interval))
+        state.force_refresh.wait(timeout=wait)
 
 
 def _maybe_prune():

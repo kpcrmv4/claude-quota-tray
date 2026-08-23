@@ -6,6 +6,10 @@ The request body is intentionally as small as possible — one token of the
 cheapest available Haiku model — because we only care about the response
 headers. The body still incurs a tiny cost, but in practice this is
 fractions of a fraction of a cent per poll.
+
+Requires the Claude Code *subscription* OAuth token (starts with `sk-ant-oat`),
+not a third-party MCP token — see token_reader. A wrong token here is an
+authentication_error (HTTP 401 "Invalid bearer token").
 """
 
 import time
@@ -40,7 +44,8 @@ class UsageSnapshot:
     ok: bool
     error: Optional[str] = None
     fetched_at: float = 0.0
-    status_code: Optional[int] = None  # HTTP status; None on network error
+    status_code: Optional[int] = None       # HTTP status; None on network error
+    retry_after_seconds: Optional[int] = None  # set on 429 so the poller backs off
 
     @property
     def has_data(self) -> bool:
@@ -72,13 +77,13 @@ def _seconds_until_reset(raw: Optional[str]) -> Optional[int]:
     Parse a reset header value into seconds-from-now.
 
     Accepts:
-      - ISO 8601 timestamps (most common from Anthropic)
+      - ISO 8601 timestamps
       - Unix epoch seconds as a number
       - Plain integer seconds-from-now
     """
     if raw is None:
         return None
-    raw = raw.strip()
+    raw = str(raw).strip()
     if not raw:
         return None
 
@@ -98,12 +103,26 @@ def _seconds_until_reset(raw: Optional[str]) -> Optional[int]:
     try:
         val = float(raw)
         now = time.time()
-        # Heuristic: if the value is much larger than "now", it's an epoch timestamp;
-        # otherwise it's relative seconds.
+        # Heuristic: if the value is much larger than "now", it's an epoch
+        # timestamp; otherwise it's relative seconds.
         if val > now / 2:
             return max(0, int(val - now))
         return max(0, int(val))
     except ValueError:
+        return None
+
+
+def snapshot_has_headers(headers) -> bool:
+    """True if at least one ratelimit header is present."""
+    return any(
+        k.startswith("anthropic-ratelimit-unified-") for k in headers.keys()
+    )
+
+
+def _retry_after(headers) -> Optional[int]:
+    try:
+        return int(float(headers.get("retry-after", "")))
+    except (TypeError, ValueError):
         return None
 
 
@@ -137,9 +156,10 @@ def fetch_usage(token: str, model: str = DEFAULT_MODEL,
             ok=False, error=f"Network error: {e}", fetched_at=time.time(),
         )
 
-    # Even on 4xx/5xx, the headers we want may still be present, so try to read them.
     rh = resp.headers
 
+    # Even on 4xx/5xx the ratelimit headers may still be present, so read them
+    # regardless — but decide `ok` from whether we actually got usable data.
     snapshot = UsageSnapshot(
         session_pct=_pct_from_utilization(
             rh.get("anthropic-ratelimit-unified-5h-utilization")
@@ -160,6 +180,7 @@ def fetch_usage(token: str, model: str = DEFAULT_MODEL,
         ok=resp.is_success or snapshot_has_headers(rh),
         fetched_at=time.time(),
         status_code=resp.status_code,
+        retry_after_seconds=_retry_after(rh) if resp.status_code == 429 else None,
     )
 
     if not resp.is_success and not snapshot.has_data:
@@ -173,13 +194,6 @@ def fetch_usage(token: str, model: str = DEFAULT_MODEL,
         snapshot.error = f"API error ({resp.status_code}): {err_msg}"
 
     return snapshot
-
-
-def snapshot_has_headers(headers) -> bool:
-    """True if at least one ratelimit header is present."""
-    return any(
-        k.startswith("anthropic-ratelimit-unified-") for k in headers.keys()
-    )
 
 
 def format_reset(seconds: Optional[int]) -> str:
@@ -212,7 +226,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     snap = fetch_usage(token)
-    print(f"ok: {snap.ok}")
+    print(f"ok: {snap.ok} (HTTP {snap.status_code})")
     if snap.error:
         print(f"error: {snap.error}")
     print(f"session: {snap.session_pct}% (reset in {format_reset(snap.session_reset_seconds)})")

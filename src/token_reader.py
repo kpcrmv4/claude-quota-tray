@@ -39,6 +39,19 @@ _TOKEN_KEYS = [
     "bearerToken",
 ]
 
+# The Anthropic subscription OAuth token always starts with this. Third-party
+# tokens that share the credentials file (Supabase MCP servers store
+# "sbp_oauth_..." under mcpOAuth, etc.) do not — we must never send those to
+# api.anthropic.com or it (correctly) 401s with "Invalid bearer token".
+_ANTHROPIC_TOKEN_PREFIX = "sk-ant"
+
+# Sub-trees that hold OTHER services' credentials. Skipped entirely when
+# searching for the Claude token so a generic recursive scan can't grab one.
+_FOREIGN_TOKEN_KEYS = {"mcpOAuth", "mcp_oauth", "mcpServers", "mcp_servers"}
+
+# Where Claude Code actually stores the subscription token, checked first.
+_CLAUDE_OAUTH_KEYS = ("claudeAiOauth", "claude_ai_oauth", "claudeAi", "oauth")
+
 
 class TokenError(Exception):
     """Raised when the OAuth token cannot be read."""
@@ -53,24 +66,53 @@ def find_credentials_path() -> Optional[Path]:
     return None
 
 
-def _extract_token(data) -> Optional[str]:
-    """Recursively search a dict/list for a likely token value."""
+def _scan_token(data, require_anthropic: bool):
+    """Recursively search for a token value, skipping foreign-credential trees.
+
+    When ``require_anthropic`` is True, only returns values that look like an
+    Anthropic token (``sk-ant`` prefix); otherwise returns the first token-shaped
+    string found. Either way the ``mcpOAuth`` sub-tree is never descended into,
+    so a third-party ``sbp_oauth_...`` token can't be mistaken for ours.
+    """
     if isinstance(data, dict):
-        # Direct hit on a known key
         for key in _TOKEN_KEYS:
-            if key in data and isinstance(data[key], str) and data[key]:
-                return data[key]
-        # Recurse
-        for value in data.values():
-            result = _extract_token(value)
+            val = data.get(key)
+            if isinstance(val, str) and val:
+                if not require_anthropic or val.startswith(_ANTHROPIC_TOKEN_PREFIX):
+                    return val
+        for key, value in data.items():
+            if key in _FOREIGN_TOKEN_KEYS:
+                continue
+            result = _scan_token(value, require_anthropic)
             if result:
                 return result
     elif isinstance(data, list):
         for item in data:
-            result = _extract_token(item)
+            result = _scan_token(item, require_anthropic)
             if result:
                 return result
     return None
+
+
+def _extract_token(data) -> Optional[str]:
+    """Find the Claude subscription OAuth token in the credentials tree.
+
+    Order of preference:
+      1. The token inside the known ``claudeAiOauth`` object.
+      2. Any ``sk-ant`` token anywhere (outside foreign-credential sub-trees).
+      3. As a last resort, any token-shaped string (older/unknown formats that
+         predate the multi-service credentials file).
+    """
+    if isinstance(data, dict):
+        for key in _CLAUDE_OAUTH_KEYS:
+            branch = data.get(key)
+            hit = _scan_token(branch, require_anthropic=False)
+            if hit:
+                return hit
+    return (
+        _scan_token(data, require_anthropic=True)
+        or _scan_token(data, require_anthropic=False)
+    )
 
 
 _PLAN_KEYS = ("subscriptionType", "subscription_type", "plan", "tier")
@@ -154,9 +196,17 @@ def read_credentials() -> dict:
             f"OAuth token field was found. Expected one of: {_TOKEN_KEYS}"
         )
 
+    # Prefer plan/tier from the Claude branch; fall back to a whole-tree scan
+    # for older formats. (mcpOAuth entries don't carry these keys, but anchoring
+    # to the Claude branch keeps this correct if that ever changes.)
+    plan_scope = data
+    for key in _CLAUDE_OAUTH_KEYS:
+        if isinstance(data, dict) and isinstance(data.get(key), dict):
+            plan_scope = data[key]
+            break
     plan = _format_plan(
-        _find_first(data, _PLAN_KEYS),
-        _find_first(data, _RATE_TIER_KEYS),
+        _find_first(plan_scope, _PLAN_KEYS) or _find_first(data, _PLAN_KEYS),
+        _find_first(plan_scope, _RATE_TIER_KEYS) or _find_first(data, _RATE_TIER_KEYS),
     )
     return {"token": token, "plan": plan, "raw": data}
 

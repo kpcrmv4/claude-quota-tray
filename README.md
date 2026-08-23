@@ -113,7 +113,7 @@ build.bat
 
 ## วิธีทำงานเบื้องหลัง
 
-1. แอปอ่าน OAuth token จาก `%USERPROFILE%\.claude\.credentials.json` (หรือ path ที่ user ตั้งใน Account)
+1. แอปอ่าน OAuth token ของ subscription (`sk-ant-oat…`) จาก `%USERPROFILE%\.claude\.credentials.json` — key `claudeAiOauth` (ระวัง: ไฟล์นี้ยังเก็บ token ของ MCP server อื่น ๆ เช่น Supabase `sbp_oauth_…` ใน `mcpOAuth` ด้วย ต้องไม่หยิบผิดตัว)
 2. ทุก N วินาที (default 60) ยิง POST ไป `https://api.anthropic.com/v1/messages` ด้วย body 1 token ของ Haiku
 3. **ไม่สนใจ response body** — อ่านเฉพาะ response headers:
    - `anthropic-ratelimit-unified-5h-utilization` → 5-hour usage %
