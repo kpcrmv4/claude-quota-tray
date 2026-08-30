@@ -847,8 +847,44 @@ def _redirect_stderr_to_log() -> None:
         pass
 
 
+_instance_lock_handle = None
+
+
+def _acquire_single_instance_lock() -> bool:
+    """Per-data-dir exclusive lock so a second copy of the app refuses to
+    start (instead of stacking a duplicate tray icon).
+
+    The lock file lives in SETTINGS_DIR, so separate instances that point at
+    different data dirs via the CQT_DATA_DIR env var still coexist. The OS
+    frees the lock when the process exits, so a crash never leaves it stale.
+    No-op off Windows."""
+    global _instance_lock_handle
+    if sys.platform != "win32":
+        return True
+    import msvcrt
+    try:
+        user_settings.SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
+        fh = open(user_settings.SETTINGS_DIR / "instance.lock", "a+")
+        fh.seek(0)
+        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+        _instance_lock_handle = fh  # keep handle alive for process lifetime
+        return True
+    except OSError:
+        return False
+
+
 def main():
     _redirect_stderr_to_log()
+
+    if not _acquire_single_instance_lock():
+        try:
+            sys.stderr.write(
+                f"=== duplicate instance for {user_settings.SETTINGS_DIR} — "
+                f"exiting {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n"
+            )
+        except Exception:
+            pass
+        return
 
     try:
         user_settings.load()
